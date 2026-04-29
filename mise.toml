@@ -1,0 +1,25 @@
+[tools]
+go = "1.25"
+golangci-lint = "2.1"
+
+[tasks]
+build = 'go build -ldflags="-s -w -X main.version={ repo.default_version }" -o o2 .'
+install = 'go install -ldflags="-s -w -X main.version={ repo.default_version }"'
+lint = "golangci-lint run ./..."
+test = "go test -race ./..."
+test-short = "go test ./..."
+clean = "rm -f o2 && go clean"
+fmt = "go fmt ./..."
+vet = "go vet ./..."
+tidy = "go mod tidy"
+check = [
+  "go mod tidy",
+  "go fmt ./...",
+  "go vet ./...",
+  "golangci-lint run ./...",
+  "go test -race ./...",
+]
+darwin-arm64 = 'GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w -X main.version={ repo.default_version }" -o o2-darwin-arm64 .'
+darwin-amd64 = 'GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w -X main.version={ repo.default_version }" -o o2-darwin-amd64 .'
+linux-amd64 = 'GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.version={ repo.default_version }" -o o2-linux-amd64 .'
+release.run = ["darwin-arm64", "darwin-amd64", "linux-amd64"]
