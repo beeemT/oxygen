@@ -691,6 +691,7 @@ The CLI translates this to a single `/_search_multi` request internally.
 - `o2 logs views create/delete`
 - `--watch` flag for polling-based continuous output
 - README + man page generation
+- SKILL.md file
 - Binary release workflow (macOS arm64/amd64 + Linux amd64)
 - **Homebrew tap integration**: on every version tag, the release workflow generates `Formula/oxygen.rb` and pushes it to `beeemT/homebrew-tap` (the same pattern used by `beeemT/git-work`). Users install with `brew install beeemT/tap/oxygen`; the installed binary is named `o2`.
 

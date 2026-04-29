@@ -121,10 +121,13 @@ func runMetricsQuery(cmd *cobra.Command, _ []string) error {
 	}
 
 	// Instant query: use end time as the query time.
-	return runMetricsQueryInstant(cli, expr, endStr, endTS)
+	return runMetricsQueryInstant(cli, expr, endTS)
 }
 
-func runMetricsQueryInstant(cli *api.Client, expr string, timeStr string, ts int64) error {
+func runMetricsQueryInstant(cli *api.Client, expr string, endTS int64) error {
+	// Use end time as the query time for instant queries.
+	timeStr := strconv.FormatInt(endTS, 10)
+
 	if cfg.DryRun {
 		// Dry-run: print the resolved request.
 		dryRun := struct {
@@ -136,7 +139,7 @@ func runMetricsQueryInstant(cli *api.Client, expr string, timeStr string, ts int
 			Method: "GET",
 			URL:    cli.BaseURL + "/" + cli.Org + "/prometheus/api/v1/query",
 			Query:  expr,
-			Time:   strconv.FormatInt(ts, 10),
+			Time:   timeStr,
 		}
 		return outWriter.WriteJSON(dryRun)
 	}
@@ -155,7 +158,7 @@ func runMetricsQueryInstant(cli *api.Client, expr string, timeStr string, ts int
 		return err
 	}
 
-	return outWriter.WriteMetrics(results, expr, ts)
+	return outWriter.WriteMetrics(results, expr, endTS)
 }
 
 func runMetricsQueryRange(cli *api.Client, expr string, startStr string, endStr string, step string, startTS int64, endTS int64) error {
@@ -188,7 +191,7 @@ func runMetricsQueryRange(cli *api.Client, expr string, startStr string, endStr 
 	}
 
 	if resp.Status != "success" {
-		return fmt.Errorf("promql query_range failed")
+		return fmt.Errorf("promql query_range failed: %s - %s", resp.ErrorType, resp.Error)
 	}
 
 	results, err := api.ParsePromQLRange(resp)
@@ -229,6 +232,9 @@ func runMetricsSeries(cmd *cobra.Command, _ []string) error {
 	}
 
 	match := cmdFlagStr(cmd, "match")
+	if match == "" {
+		return fmt.Errorf("--match is required")
+	}
 	startStr := cmdFlagStr(cmd, "start")
 	endStr := cmdFlagStr(cmd, "end")
 
@@ -282,7 +288,7 @@ func runMetricsSeries(cmd *cobra.Command, _ []string) error {
 	}
 
 	if resp.Status != "success" {
-		return fmt.Errorf("promql series failed")
+		return fmt.Errorf("promql series failed: %s - %s", resp.ErrorType, resp.Error)
 	}
 
 	if cfg.Format == "table" {
@@ -340,7 +346,7 @@ func runMetricsLabelValues(cmd *cobra.Command, _ []string) error {
 	}
 
 	if resp.Status != "success" {
-		return fmt.Errorf("promql label values failed")
+		return fmt.Errorf("promql label values failed: %s - %s", resp.ErrorType, resp.Error)
 	}
 
 	if cfg.Format == "table" {

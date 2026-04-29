@@ -32,8 +32,10 @@ type PromQLVectorEntry struct {
 
 // PromQLRangeResponse is the response from GET /{org}/prometheus/api/v1/query_range.
 type PromQLRangeResponse struct {
-	Status string          `json:"status"`
-	Data   PromQLRangeData `json:"data"`
+	Status    string          `json:"status"`
+	Data      PromQLRangeData `json:"data"`
+	ErrorType string          `json:"errorType,omitempty"`
+	Error     string          `json:"error,omitempty"`
 }
 
 // PromQLRangeData is the data section of a range query response.
@@ -56,14 +58,18 @@ type PromQLSample struct {
 
 // PromQLSeriesResponse is the response from GET /{org}/prometheus/api/v1/series.
 type PromQLSeriesResponse struct {
-	Status string              `json:"status"`
-	Data   []map[string]string `json:"data"`
+	Status    string              `json:"status"`
+	Data      []map[string]string `json:"data"`
+	ErrorType string              `json:"errorType,omitempty"`
+	Error     string              `json:"error,omitempty"`
 }
 
 // PromQLLabelValuesResponse is the response from GET /{org}/prometheus/api/v1/label/{name}/values.
 type PromQLLabelValuesResponse struct {
-	Status string   `json:"status"`
-	Data   []string `json:"data"`
+	Status    string   `json:"status"`
+	Data      []string `json:"data"`
+	ErrorType string   `json:"errorType,omitempty"`
+	Error     string   `json:"error,omitempty"`
 }
 
 // PromQLQuery sends a PromQL instant query.
@@ -184,6 +190,9 @@ type Sample struct {
 
 // ParsePromQLInstant converts a PromQL instant query response into InstantResult.
 func ParsePromQLInstant(resp *PromQLInstantResponse) ([]InstantResult, error) {
+	if resp == nil {
+		return nil, fmt.Errorf("nil response")
+	}
 	if resp.Status != "success" {
 		return nil, fmt.Errorf("promql query failed: %s - %s", resp.ErrorType, resp.Error)
 	}
@@ -208,8 +217,11 @@ func ParsePromQLInstant(resp *PromQLInstantResponse) ([]InstantResult, error) {
 
 // ParsePromQLRange converts a PromQL range query response into RangeResult.
 func ParsePromQLRange(resp *PromQLRangeResponse) ([]RangeResult, error) {
+	if resp == nil {
+		return nil, fmt.Errorf("nil response")
+	}
 	if resp.Status != "success" {
-		return nil, fmt.Errorf("promql query_range failed")
+		return nil, fmt.Errorf("promql query_range failed: %s - %s", resp.ErrorType, resp.Error)
 	}
 
 	var results []RangeResult
