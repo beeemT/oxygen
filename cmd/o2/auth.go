@@ -19,7 +19,6 @@ import (
 
 	"github.com/beeemt/oxygen/internal/api"
 	"github.com/beeemt/oxygen/internal/auth"
-	"github.com/beeemt/oxygen/internal/config"
 	"github.com/beeemt/oxygen/internal/output"
 )
 
@@ -63,18 +62,31 @@ func init() {
 	lf.String("org", "", "Organization ID (required)")
 	lf.String("user", "", "User email (required)")
 	lf.Duration("timeout", 30*time.Second, "Login request timeout")
-	loginCmd.MarkFlagRequired("url")
-	loginCmd.MarkFlagRequired("org")
-	loginCmd.MarkFlagRequired("user")
+	_ = loginCmd.MarkFlagRequired("url")
+	_ = loginCmd.MarkFlagRequired("org")
+	_ = loginCmd.MarkFlagRequired("user")
+
+	// Bind login flags to viper so they can be read via viper.GetString
+	_ = viper.BindPFlag("url", lf.Lookup("url"))
+	_ = viper.BindPFlag("org", lf.Lookup("org"))
+	_ = viper.BindPFlag("user", lf.Lookup("user"))
+	_ = viper.BindPFlag("timeout", lf.Lookup("timeout"))
 
 	// o2 auth logout flags
 	vf := logoutCmd.Flags()
 	vf.String("url", "", "OpenObserve base URL (required)")
 	vf.String("org", "", "Organization ID (required)")
 	vf.String("user", "", "User email")
+	_ = logoutCmd.MarkFlagRequired("url")
+	_ = logoutCmd.MarkFlagRequired("org")
+
+	// Bind logout flags to viper
+	_ = viper.BindPFlag("url", vf.Lookup("url"))
+	_ = viper.BindPFlag("org", vf.Lookup("org"))
+	_ = viper.BindPFlag("user", vf.Lookup("user"))
 }
 
-func runLogin(cmd *cobra.Command, _ []string) error {
+func runLogin(_ *cobra.Command, _ []string) error {
 	url := viper.GetString("url")
 	org := viper.GetString("org")
 	user := viper.GetString("user")
@@ -97,7 +109,7 @@ func runLogin(cmd *cobra.Command, _ []string) error {
 	loginURL := baseURL + "/api/auth/login"
 
 	// Send login request.
-	body, _ := json.Marshal(map[string]string{
+	body, err := json.Marshal(map[string]string{
 		"name":     user,
 		"password": password,
 	})
@@ -112,9 +124,9 @@ func runLogin(cmd *cobra.Command, _ []string) error {
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("login request failed: %w", err)
+		return fmt.Errorf("encoding login body: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var loginResp struct {
 		Status  bool   `json:"status"`
@@ -129,7 +141,7 @@ func runLogin(cmd *cobra.Command, _ []string) error {
 		if msg == "" {
 			msg = "login failed"
 		}
-		outWriter.Error(5, msg)
+
 		return fmt.Errorf("%s", msg)
 	}
 
@@ -138,6 +150,7 @@ func runLogin(cmd *cobra.Command, _ []string) error {
 	for _, c := range resp.Cookies() {
 		if c.Name == "auth_tokens" {
 			basicToken = extractBasicToken(c.Value)
+
 			break
 		}
 	}
@@ -155,6 +168,7 @@ func runLogin(cmd *cobra.Command, _ []string) error {
 	}
 
 	outWriter.Info("Authenticated as %s for org %s on %s", user, org, host)
+
 	return nil
 }
 
@@ -171,6 +185,7 @@ func extractBasicToken(cookieValue string) string {
 	if err := json.Unmarshal(decoded, &tokens); err != nil {
 		return ""
 	}
+
 	return tokens.AccessToken
 }
 
@@ -178,10 +193,11 @@ func extractHostFromURL(rawURL string) string {
 	if u, err := url.Parse(rawURL); err == nil {
 		return u.Host
 	}
+
 	return strings.TrimPrefix(rawURL, "https://")
 }
 
-func runLogout(cmd *cobra.Command, _ []string) error {
+func runLogout(_ *cobra.Command, _ []string) error {
 	urlStr := viper.GetString("url")
 	org := viper.GetString("org")
 	user := viper.GetString("user")
@@ -203,6 +219,7 @@ func runLogout(cmd *cobra.Command, _ []string) error {
 	}
 
 	outWriter.Info("Removed credential for %s@%s", user, host)
+
 	return nil
 }
 
@@ -213,6 +230,7 @@ func runAuthList(_ *cobra.Command, _ []string) error {
 	}
 	if len(summaries) == 0 {
 		outWriter.Info("No stored auth contexts. Run 'o2 auth login' to add one.")
+
 		return nil
 	}
 
@@ -225,15 +243,11 @@ func runAuthList(_ *cobra.Command, _ []string) error {
 	for _, s := range summaries {
 		rows = append(rows, row{User: s.User, Org: s.Org, Host: s.Host})
 	}
-	_ = outWriter.WriteJSON(rows)
-	return nil
-}
-
-func detectActiveContext(cfg *config.Config) string {
-	if cfg.URL != "" && cfg.Org != "" {
-		return fmt.Sprintf("%s/%s", cfg.Org, extractHostFromURL(cfg.URL))
+	if err := outWriter.WriteJSON(rows); err != nil {
+		return fmt.Errorf("writing auth list: %w", err)
 	}
-	return ""
+
+	return nil
 }
 
 func runAuthCurrent(_ *cobra.Command, _ []string) error {
@@ -244,8 +258,10 @@ func runAuthCurrent(_ *cobra.Command, _ []string) error {
 			code = 2
 		}
 		outWriter.Error(code, err.Error())
+
 		return err
 	}
+
 	return outWriter.WriteJSON(ctx)
 }
 
@@ -254,5 +270,6 @@ func apiExitCode(err error) int {
 	if errors.As(err, &httpErr) {
 		return api.ExitCode(httpErr.StatusCode)
 	}
+
 	return 1
 }

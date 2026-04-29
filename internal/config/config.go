@@ -30,16 +30,16 @@ const (
 // Config holds all CLI configuration. Fields are populated by config file,
 // environment variables (with O2_ prefix), and CLI flags.
 type Config struct {
-	URL       string
-	Org       string
-	User      string
-	Token     string
-	Password  string
-	Format    Format
-	NoColor   bool
-	Timeout   time.Duration
-	Quiet     bool
-	DryRun    bool
+	URL      string
+	Org      string
+	User     string
+	Token    string
+	Password string
+	Format   Format
+	NoColor  bool
+	Timeout  time.Duration
+	Quiet    bool
+	DryRun   bool
 }
 
 // Load reads configuration from a Viper-backed config file and environment
@@ -60,7 +60,7 @@ func Load(configFile string) (*Config, error) {
 			}
 		}
 		if xdgConfigHome != "" {
-			v.AddConfigPath(filepath.Join(xdgConfigHome, "openobserve-cli"))
+			v.AddConfigPath(filepath.Join(xdgConfigHome, "oxygen"))
 		}
 		v.AddConfigPath(".")
 		v.SetConfigName("config")
@@ -70,11 +70,9 @@ func Load(configFile string) (*Config, error) {
 	v.SetDefault("timeout", DefaultTimeout.String())
 	v.SetDefault("format", string(DefaultFormat))
 
-	if configFile != "" {
-		if err := v.ReadInConfig(); err != nil {
-			if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
-				return nil, fmt.Errorf("reading config file: %w", err)
-			}
+	if err := v.ReadInConfig(); err != nil {
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			return nil, fmt.Errorf("reading config file: %w", err)
 		}
 	}
 

@@ -33,10 +33,10 @@ func NewResolver(cfg *config.Config, store Store) *Resolver {
 
 // Resolve returns the effective auth context following priority order:
 //
-//	1. --url + --org + --token flags
-//	2. O2_URL + O2_ORG + O2_TOKEN env vars
-//	3. O2_URL + O2_ORG → keychain lookup
-func (r *Resolver) Resolve(ctx context.Context) (*Context, error) {
+//  1. --url + --org + --token flags
+//  2. O2_URL + O2_ORG + O2_TOKEN env vars
+//  3. O2_URL + O2_ORG → keychain lookup
+func (r *Resolver) Resolve(_ context.Context) (*Context, error) {
 	cfg := r.cfg
 
 	// Priority 1: explicit CLI flags (Token is non-empty only when --token was set).
@@ -94,6 +94,7 @@ func (r *Resolver) Resolve(ctx context.Context) (*Context, error) {
 		if errors.Is(err, ErrNotFound) {
 			return nil, fmt.Errorf("no stored credential for %s@%s; run 'o2 auth login' first: %w", user, host, ErrNoAuthContext)
 		}
+
 		return nil, fmt.Errorf("reading keychain: %w", err)
 	}
 
@@ -114,7 +115,7 @@ func ListContexts(store Store) ([]ContextSummary, error) {
 	}
 	var summaries []ContextSummary
 	for _, key := range keys {
-		// Format: openobserve-cli/{user}/{org}@{host}
+		// Format: oxygen/{user}/{org}@{host}
 		parts := strings.Split(key, "/")
 		if len(parts) != 3 {
 			continue
@@ -130,6 +131,7 @@ func ListContexts(store Store) ([]ContextSummary, error) {
 			Host: userOrgHost[1],
 		})
 	}
+
 	return summaries, nil
 }
 
@@ -148,6 +150,7 @@ func extractHost(rawURL string) string {
 	if u, err := url.Parse(rawURL); err == nil {
 		return u.Host
 	}
+
 	return strings.TrimPrefix(rawURL, "https://")
 }
 

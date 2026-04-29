@@ -11,8 +11,8 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/cenkalti/backoff/v4"
 	"github.com/beeemt/oxygen/internal/auth"
+	"github.com/cenkalti/backoff/v4"
 )
 
 // Client is the shared HTTP client used by all API calls.
@@ -24,19 +24,23 @@ type Client struct {
 }
 
 // NewClient creates an API client for the given auth context.
-func NewClient(ctx *auth.Context, timeout time.Duration) *Client {
+func NewClient(ctx *auth.Context, timeout time.Duration) (*Client, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("auth context is required")
+	}
 	baseURL := ctx.URL + "/api"
+
 	return &Client{
 		httpClient: &http.Client{
 			Timeout: timeout,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 				return http.ErrUseLastResponse // don't follow redirects with POST bodies
 			},
 		},
 		baseURL: baseURL,
 		org:     ctx.Org,
 		token:   ctx.Token,
-	}
+	}, nil
 }
 
 // Request wraps an HTTP request with auth headers and optional JSON body.
@@ -59,6 +63,7 @@ func (c *Client) Do(ctx context.Context, req Request) (*Response, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	return &Response{Body: body}, nil
 }
 
@@ -92,11 +97,6 @@ func (c *Client) doWithRetry(ctx context.Context, req Request) ([]byte, error) {
 		contentType = "application/json"
 	}
 
-	timeout := req.Timeout
-	if timeout == 0 {
-		timeout = 30 * time.Second
-	}
-
 	// Determine if we should retry.
 	safe := req.Method == http.MethodGet ||
 		req.Method == http.MethodHead ||
@@ -108,11 +108,10 @@ func (c *Client) doWithRetry(ctx context.Context, req Request) ([]byte, error) {
 		type opResult struct {
 			body       []byte
 			statusCode int
-			err        error
 		}
 
 		op := func() (opResult, error) {
-			httpReq, err := http.NewRequestWithContext(ctx, req.Method, u, bodyReader)
+			httpReq, err := http.NewRequestWithContext(ctx, req.Method, u, http.NoBody)
 			if err != nil {
 				return opResult{}, fmt.Errorf("building request: %w", err)
 			}
@@ -126,9 +125,17 @@ func (c *Client) doWithRetry(ctx context.Context, req Request) ([]byte, error) {
 			if err != nil {
 				return opResult{}, err
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
-			body, _ := io.ReadAll(resp.Body)
+			// Don't retry on 3xx redirects.
+			if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+				return opResult{statusCode: resp.StatusCode}, nil
+			}
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return opResult{statusCode: resp.StatusCode}, fmt.Errorf("reading response body: %w", err)
+			}
+
 			return opResult{body: body, statusCode: resp.StatusCode}, nil
 		}
 
@@ -137,8 +144,9 @@ func (c *Client) doWithRetry(ctx context.Context, req Request) ([]byte, error) {
 			return nil, wrapError(err, -1)
 		}
 		if r.statusCode >= 400 {
-			return nil, wrapError(newHTTPError(r.statusCode, r.body), r.statusCode)
+			return nil, wrapError(newHTTPError(r.statusCode, r.body), 0)
 		}
+
 		return r.body, nil
 	}
 
@@ -153,23 +161,30 @@ func (c *Client) doWithRetry(ctx context.Context, req Request) ([]byte, error) {
 	httpReq.Header.Set("Authorization", "Basic "+token)
 	httpReq.Header.Set("Accept", "application/json")
 
-	_ = timeout // TODO: respect per-request timeout via context deadline.
-
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, wrapError(err, -1)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
-	body, _ := io.ReadAll(resp.Body)
+	// Don't return body for 3xx redirects.
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return nil, wrapError(newHTTPError(resp.StatusCode, nil), resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading response body: %w", err)
+	}
 	if resp.StatusCode >= 400 {
 		return nil, wrapError(newHTTPError(resp.StatusCode, body), resp.StatusCode)
 	}
+
 	return body, nil
 }
 
 // orgPath returns the path segment with org, unless the path is org-less.
-func orgPath(org, path string) string {
+func orgPath(org string, path string) string {
 	// Endpoints that have no org segment.
 	switch path {
 	case "auth/login", "auth/logout", "organizations", "":
@@ -178,6 +193,7 @@ func orgPath(org, path string) string {
 	if org == "" {
 		return path
 	}
+
 	return org + "/" + path
 }
 
@@ -191,6 +207,7 @@ func (r *Response) Parse(v any) error {
 	if len(r.Body) == 0 {
 		return nil
 	}
+
 	return json.Unmarshal(r.Body, v)
 }
 
@@ -205,6 +222,7 @@ func (e *HTTPError) Error() string {
 	if e.Message != "" {
 		return fmt.Sprintf("API error (%d): %s", e.StatusCode, e.Message)
 	}
+
 	return fmt.Sprintf("API error (%d)", e.StatusCode)
 }
 
@@ -218,16 +236,18 @@ func newHTTPError(status int, body []byte) *HTTPError {
 			msg = parsed.Message
 		}
 	}
+
 	return &HTTPError{StatusCode: status, Message: msg, Body: body}
 }
 
-func wrapError(err error, status int) error {
+func wrapError(err error, _ int) error {
 	if err == nil {
 		return nil
 	}
 	if httpErr, ok := err.(*HTTPError); ok {
 		return httpErr
 	}
+
 	return fmt.Errorf("request failed: %w", err)
 }
 
@@ -254,8 +274,9 @@ func ExitCode(status int) int {
 }
 
 // BasicAuth builds a Basic auth credential string from email and password.
-func BasicAuth(email, password string) string {
+func BasicAuth(email string, password string) string {
 	creds := base64.StdEncoding.EncodeToString([]byte(email + ":" + password))
+
 	return creds
 }
 

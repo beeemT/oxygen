@@ -1,10 +1,10 @@
 [tools]
 go = "1.25"
-golangci-lint = "2.1"
+golangci-lint = "2.11"
 
 [tasks]
-build = 'go build -ldflags="-s -w -X main.version={ repo.default_version }" -o o2 .'
-install = 'go install -ldflags="-s -w -X main.version={ repo.default_version }"'
+build = "cd cmd/o2 && go build -ldflags=\"-s -w\" -o ../../o2 ."
+install = "cd cmd/o2 && go install -ldflags=\"-s -w\""
 lint = "golangci-lint run ./..."
 test = "go test -race ./..."
 test-short = "go test ./..."
@@ -19,7 +19,7 @@ check = [
   "golangci-lint run ./...",
   "go test -race ./...",
 ]
-darwin-arm64 = 'GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w -X main.version={ repo.default_version }" -o o2-darwin-arm64 .'
-darwin-amd64 = 'GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w -X main.version={ repo.default_version }" -o o2-darwin-amd64 .'
-linux-amd64 = 'GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.version={ repo.default_version }" -o o2-linux-amd64 .'
+darwin-arm64 = "cd cmd/o2 && GOOS=darwin GOARCH=arm64 go build -ldflags=\"-s -w\" -o ../../o2-darwin-arm64 ."
+darwin-amd64 = "cd cmd/o2 && GOOS=darwin GOARCH=amd64 go build -ldflags=\"-s -w\" -o ../../o2-darwin-amd64 ."
+linux-amd64 = "cd cmd/o2 && GOOS=linux GOARCH=amd64 go build -ldflags=\"-s -w\" -o ../../o2-linux-amd64 ."
 release.run = ["darwin-arm64", "darwin-amd64", "linux-amd64"]

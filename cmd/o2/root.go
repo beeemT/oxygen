@@ -63,11 +63,11 @@ func init() {
 func initConfig(cmd *cobra.Command) error {
 	// Bind flags to viper so env vars O2_* override them.
 	flags := cmd.Flags()
-	viper.BindPFlag("url", flags.Lookup("url"))
-	viper.BindPFlag("org", flags.Lookup("org"))
-	viper.BindPFlag("token", flags.Lookup("token"))
-	viper.BindPFlag("format", flags.Lookup("format"))
-	viper.BindPFlag("timeout", flags.Lookup("timeout"))
+	_ = viper.BindPFlag("url", flags.Lookup("url"))
+	_ = viper.BindPFlag("org", flags.Lookup("org"))
+	_ = viper.BindPFlag("token", flags.Lookup("token"))
+	_ = viper.BindPFlag("format", flags.Lookup("format"))
+	_ = viper.BindPFlag("timeout", flags.Lookup("timeout"))
 
 	// Load config file + env vars into cfg.
 	var err error
@@ -92,9 +92,15 @@ func initConfig(cmd *cobra.Command) error {
 	if flags.Changed("timeout") {
 		cfg.Timeout = viper.GetDuration("timeout")
 	}
-	cfg.NoColor, _ = flags.GetBool("no-color")
-	cfg.Quiet, _ = flags.GetBool("quiet")
-	cfg.DryRun, _ = flags.GetBool("dry-run")
+	if noColor, err := flags.GetBool("no-color"); err == nil {
+		cfg.NoColor = noColor
+	}
+	if quiet, err := flags.GetBool("quiet"); err == nil {
+		cfg.Quiet = quiet
+	}
+	if dryRun, err := flags.GetBool("dry-run"); err == nil {
+		cfg.DryRun = dryRun
+	}
 
 	// User may come from flag or env var.
 	if cfg.User == "" {
@@ -102,12 +108,12 @@ func initConfig(cmd *cobra.Command) error {
 	}
 
 	// Open credential store, falling back to encrypted file on headless Linux.
-	store, err = auth.NewKeychain("openobserve-cli")
+	store, err = auth.NewKeychain("oxygen")
 	if err != nil {
-		home, _ := os.UserHomeDir()
+		home, homeErr := os.UserHomeDir()
 		dir := ""
-		if home != "" {
-			dir = home + "/.config/openobserve-cli"
+		if homeErr == nil {
+			dir = home + "/.config/oxygen"
 		}
 		store, err = auth.NewFileStore(dir)
 		if err != nil {
@@ -117,29 +123,32 @@ func initConfig(cmd *cobra.Command) error {
 	}
 
 	outWriter = output.NewWriter(output.Format(cfg.Format), cfg.Quiet)
+
 	return nil
 }
 
 // warningStore wraps a Store and prints a one-time warning on first write.
 type warningStore struct {
-	inner auth.Store
+	inner  auth.Store
 	warned bool
 }
 
-func (s *warningStore) Store(key, token string) error {
+func (s *warningStore) Store(key string, token string) error {
 	if !s.warned {
-		fmt.Fprintln(os.Stderr, "WARNING: System keychain unavailable; credentials stored in ~/.config/openobserve-cli/credentials.json")
+		fmt.Fprintln(os.Stderr, "WARNING: System keychain unavailable; credentials stored in ~/.config/oxygen/credentials.json")
 		s.warned = true
 	}
+
 	return s.inner.Store(key, token)
 }
 
 func (s *warningStore) Get(key string) (string, error) { return s.inner.Get(key) }
-func (s *warningStore) Delete(key string) error       { return s.inner.Delete(key) }
-func (s *warningStore) List() ([]string, error)       { return s.inner.List() }
+func (s *warningStore) Delete(key string) error        { return s.inner.Delete(key) }
+func (s *warningStore) List() ([]string, error)        { return s.inner.List() }
 
 // resolveContext returns the fully resolved auth context for API calls.
 func resolveContext() (*auth.Context, error) {
 	resolver := auth.NewResolver(cfg, store)
+
 	return resolver.Resolve(context.Background())
 }

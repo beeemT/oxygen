@@ -6,24 +6,26 @@ import (
 	"strings"
 )
 
-// PromptPassword reads a password from stdin without echo.
-// On Unix platforms it tries to suppress echo via terminal control on /dev/tty.
-// Falls back to a plain stdin read (with echo) on failure.
+// PromptPassword reads a password from stdin.
+// On Unix it reads from /dev/tty if available to avoid consuming piped stdin.
+// Note: terminal echo suppression requires terminal configuration by the caller.
 func PromptPassword(message string) (string, error) {
 	fmt.Print(message)
 
 	// Try reading from /dev/tty first so piped stdin is not consumed.
 	f := os.Stdin
-	if tty, err := os.Open("/dev/tty"); err == nil {
+	tty, err := os.Open("/dev/tty")
+	if err == nil {
 		f = tty
-		defer tty.Close()
+		defer func() { _ = tty.Close() }()
 	}
 
 	pw, err := readLine(f)
 	if err != nil {
 		return "", err
 	}
-	fmt.Println() // newline after password input
+	fmt.Println()
+
 	return strings.TrimRight(pw, "\r"), nil
 }
 
@@ -32,5 +34,6 @@ func PromptPassword(message string) (string, error) {
 func readLine(f *os.File) (string, error) {
 	var s string
 	_, err := fmt.Fscanln(f, &s)
+
 	return s, err
 }

@@ -54,6 +54,7 @@ func (w *Writer) Stderr() io.Writer { return w.stderr }
 // IsTerminal returns true if stdout is connected to a terminal.
 func (w *Writer) IsTerminal() bool {
 	fd := fileDescriptor(w.stdout)
+
 	return isatty.IsTerminal(fd) || isatty.IsCygwinTerminal(fd)
 }
 
@@ -62,11 +63,12 @@ func fileDescriptor(w io.Writer) uintptr {
 	if f, ok := w.(*os.File); ok {
 		return f.Fd()
 	}
+
 	return 0
 }
 
 // WriteJSON writes v in the configured JSON format.
-func (w *Writer) WriteJSON(v interface{}) error {
+func (w *Writer) WriteJSON(v any) error {
 	switch w.format {
 	case FormatPretty:
 		return w.jsonIndent(v)
@@ -75,16 +77,18 @@ func (w *Writer) WriteJSON(v interface{}) error {
 	}
 }
 
-func (w *Writer) json(v interface{}) error {
+func (w *Writer) json(v any) error {
 	enc := json.NewEncoder(w.stdout)
 	enc.SetEscapeHTML(false)
+
 	return enc.Encode(v)
 }
 
-func (w *Writer) jsonIndent(v interface{}) error {
+func (w *Writer) jsonIndent(v any) error {
 	enc := json.NewEncoder(w.stdout)
 	enc.SetIndent("", "  ")
 	enc.SetEscapeHTML(false)
+
 	return enc.Encode(v)
 }
 
@@ -92,7 +96,7 @@ func (w *Writer) jsonIndent(v interface{}) error {
 // In JSON mode it outputs a structured error object.
 func (w *Writer) Error(code int, message string) {
 	if w.format == FormatJSON {
-		_ = w.json(struct {
+		err := w.json(struct {
 			Error    string `json:"error"`
 			Code     int    `json:"code"`
 			ExitCode int    `json:"exit_code"`
@@ -101,6 +105,10 @@ func (w *Writer) Error(code int, message string) {
 			Code:     code,
 			ExitCode: code,
 		})
+		if err != nil {
+			fmt.Fprintf(w.stderr, "Error: %s [exit %d]\n", message, code)
+		}
+
 		return
 	}
 	fmt.Fprintf(w.stderr, "Error: %s [exit %d]\n", message, code)
@@ -126,5 +134,6 @@ func Prompt(message string) (string, error) {
 	fmt.Print(message)
 	var input string
 	_, err := fmt.Fscanln(os.Stdin, &input)
+
 	return input, err
 }
