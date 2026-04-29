@@ -6,6 +6,8 @@ import (
 	"math"
 	"sort"
 	"strings"
+
+	"github.com/beeemt/oxygen/internal/api"
 )
 
 // MetricsRenderer renders Prometheus-style metric results.
@@ -19,54 +21,8 @@ func NewMetricsRenderer(out io.Writer, noColor bool) *MetricsRenderer {
 	return &MetricsRenderer{out: out, noColor: noColor}
 }
 
-// InstantResult is a single PromQL instant query result.
-type InstantResult struct {
-	Labels map[string]string
-	Value  float64
-}
-
-// RangeResult is a single PromQL range query series.
-type RangeResult struct {
-	Labels  map[string]string
-	Samples []Sample
-}
-
-// Sample is a timestamped value.
-type Sample struct {
-	Timestamp int64
-	Value     float64
-}
-
-// PromQLInstant is the server response shape for an instant query.
-type PromQLInstant struct {
-	Status string     `json:"status"`
-	Data   PromQLData `json:"data"`
-	Error  string     `json:"error,omitempty"`
-}
-
-// PromQLData is the data section of a PromQL response.
-type PromQLData struct {
-	ResultType string            `json:"resultType"`
-	Result     []jsonResultEntry `json:"result"`
-}
-
-// jsonResultEntry handles both vector ("metric" + "value") and matrix ("metric" + "values") shapes.
-type jsonResultEntry struct {
-	Metric map[string]string `json:"metric"`
-	// Vector (instant): value [timestamp, value]
-	Value [2]any `json:"value,omitempty"`
-	// Matrix (range): values [[timestamp, value], ...]
-	Values []Sample `json:"values,omitempty"`
-}
-
-// PromQLRange is the server response shape for a range query.
-type PromQLRange struct {
-	Status string     `json:"status"`
-	Data   PromQLData `json:"data"`
-}
-
 // RenderInstant writes a PromQL instant query result to out.
-func (r *MetricsRenderer) RenderInstant(results []InstantResult, query string, ts int64) error {
+func (r *MetricsRenderer) RenderInstant(results []api.InstantResult, query string, ts int64) error {
 	if len(results) == 0 {
 		fmt.Fprintln(r.out, "No results.")
 		return nil
@@ -89,7 +45,7 @@ func (r *MetricsRenderer) RenderInstant(results []InstantResult, query string, t
 }
 
 // RenderRange writes a PromQL range query result to out.
-func (r *MetricsRenderer) RenderRange(results []RangeResult, query string) error {
+func (r *MetricsRenderer) RenderRange(results []api.RangeResult, query string) error {
 	if len(results) == 0 {
 		fmt.Fprintln(r.out, "No results.")
 		return nil
@@ -119,7 +75,7 @@ func (r *MetricsRenderer) RenderRange(results []RangeResult, query string) error
 	return nil
 }
 
-func (r *MetricsRenderer) maxLabelWidth(results []InstantResult) int {
+func (r *MetricsRenderer) maxLabelWidth(results []api.InstantResult) int {
 	max := 0
 	for _, res := range results {
 		l := len(formatLabels(res.Labels, 0))
@@ -130,7 +86,7 @@ func (r *MetricsRenderer) maxLabelWidth(results []InstantResult) int {
 	return max
 }
 
-func totalSamples(results []RangeResult) int {
+func totalSamples(results []api.RangeResult) int {
 	n := 0
 	for _, r := range results {
 		n += len(r.Samples)

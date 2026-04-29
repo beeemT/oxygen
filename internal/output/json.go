@@ -167,7 +167,7 @@ func (w *Writer) WriteCSV(records []json.RawMessage) error {
 }
 
 // WriteMetrics renders PromQL instant query results.
-func (w *Writer) WriteMetrics(results []InstantResult, query string, ts int64) error {
+func (w *Writer) WriteMetrics(results []api.InstantResult, query string, ts int64) error {
 	r := NewMetricsRenderer(w.stdout, w.format == FormatJSON || w.format == FormatCSV || w.noColor)
 	return r.RenderInstant(results, query, ts)
 }
