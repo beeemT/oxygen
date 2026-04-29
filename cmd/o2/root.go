@@ -4,7 +4,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -61,13 +63,24 @@ func init() {
 // initConfig populates cfg from config file + env vars + CLI flags,
 // and opens the credential store. Called via PersistentPreRunE.
 func initConfig(cmd *cobra.Command) error {
-	// Bind flags to viper so env vars O2_* override them.
+	// Activate environment variable watching for all keys bound via BindEnv.
+	// This must be called before flag parsing so env vars are available when
+	// subcommand flags are accessed via viper.GetString after ParseFlags.
+	// BindEnv must have been called already (done in subcommand init()).
+	viper.AutomaticEnv()
+
+	// Bind root-level flags to viper so env vars O2_* override them.
 	flags := cmd.Flags()
 	_ = viper.BindPFlag("url", flags.Lookup("url"))
 	_ = viper.BindPFlag("org", flags.Lookup("org"))
 	_ = viper.BindPFlag("token", flags.Lookup("token"))
 	_ = viper.BindPFlag("format", flags.Lookup("format"))
 	_ = viper.BindPFlag("timeout", flags.Lookup("timeout"))
+	_ = viper.BindEnv("url", "O2_URL")
+	_ = viper.BindEnv("org", "O2_ORG")
+	_ = viper.BindEnv("token", "O2_TOKEN")
+	_ = viper.BindEnv("format", "O2_FORMAT")
+	_ = viper.BindEnv("timeout", "O2_TIMEOUT")
 
 	// Load config file + env vars into cfg.
 	var err error
@@ -122,7 +135,7 @@ func initConfig(cmd *cobra.Command) error {
 		store = &warningStore{inner: store}
 	}
 
-	outWriter = output.NewWriter(output.Format(cfg.Format), cfg.Quiet)
+	outWriter = output.NewWriter(output.Format(cfg.Format), cfg.Quiet, cfg.NoColor)
 
 	return nil
 }
@@ -147,8 +160,33 @@ func (s *warningStore) Delete(key string) error        { return s.inner.Delete(k
 func (s *warningStore) List() ([]string, error)        { return s.inner.List() }
 
 // resolveContext returns the fully resolved auth context for API calls.
+// When --dry-run is set and --url/--org are provided but no token is available,
+// it returns a minimal context so dry-run output can be printed without auth.
 func resolveContext() (*auth.Context, error) {
+	// Dry-run mode: accept URL + ORG even without a token.
+	if cfg.DryRun && cfg.URL != "" && cfg.Org != "" {
+		token := cfg.Token
+		if token == "" {
+			token = "<dry-run-token>"
+		}
+		return &auth.Context{
+			URL:   strings.TrimRight(cfg.URL, "/"),
+			Org:   cfg.Org,
+			User:  cfg.User,
+			Token: token,
+			Host:  extractHost(cfg.URL),
+		}, nil
+	}
+
 	resolver := auth.NewResolver(cfg, store)
 
 	return resolver.Resolve(context.Background())
+}
+
+func extractHost(rawURL string) string {
+	if u, err := url.Parse(rawURL); err == nil {
+		return u.Host
+	}
+
+	return strings.TrimPrefix(rawURL, "https://")
 }

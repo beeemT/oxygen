@@ -17,10 +17,10 @@ import (
 
 // Client is the shared HTTP client used by all API calls.
 type Client struct {
-	httpClient *http.Client
-	baseURL    string // e.g. "https://o2.example.com/api"
-	org        string
-	token      string // Basic auth credential
+	HTTPClient *http.Client
+	BaseURL    string // e.g. "https://o2.example.com/api"
+	Org        string
+	Token      string // Basic auth credential
 }
 
 // NewClient creates an API client for the given auth context.
@@ -31,15 +31,15 @@ func NewClient(ctx *auth.Context, timeout time.Duration) (*Client, error) {
 	baseURL := ctx.URL + "/api"
 
 	return &Client{
-		httpClient: &http.Client{
+		HTTPClient: &http.Client{
 			Timeout: timeout,
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 				return http.ErrUseLastResponse // don't follow redirects with POST bodies
 			},
 		},
-		baseURL: baseURL,
-		org:     ctx.Org,
-		token:   ctx.Token,
+		BaseURL: baseURL,
+		Org:     ctx.Org,
+		Token:   ctx.Token,
 	}, nil
 }
 
@@ -70,17 +70,17 @@ func (c *Client) Do(ctx context.Context, req Request) (*Response, error) {
 func (c *Client) doWithRetry(ctx context.Context, req Request) ([]byte, error) {
 	token := req.Token
 	if token == "" {
-		token = c.token
+		token = c.Token
 	}
 
 	org := req.Org
 	if org == "" {
-		org = c.org
+		org = c.Org
 	}
 
 	// Build URL.
 	path := orgPath(org, req.Path)
-	u := c.baseURL + "/" + path
+	u := c.BaseURL + "/" + path
 	if req.Query != nil {
 		u += "?" + req.Query.Encode()
 	}
@@ -121,7 +121,7 @@ func (c *Client) doWithRetry(ctx context.Context, req Request) ([]byte, error) {
 			httpReq.Header.Set("Authorization", "Basic "+token)
 			httpReq.Header.Set("Accept", "application/json")
 
-			resp, err := c.httpClient.Do(httpReq)
+			resp, err := c.HTTPClient.Do(httpReq)
 			if err != nil {
 				return opResult{}, err
 			}
@@ -161,7 +161,7 @@ func (c *Client) doWithRetry(ctx context.Context, req Request) ([]byte, error) {
 	httpReq.Header.Set("Authorization", "Basic "+token)
 	httpReq.Header.Set("Accept", "application/json")
 
-	resp, err := c.httpClient.Do(httpReq)
+	resp, err := c.HTTPClient.Do(httpReq)
 	if err != nil {
 		return nil, wrapError(err, -1)
 	}
@@ -216,6 +216,11 @@ type HTTPError struct {
 	StatusCode int
 	Message    string
 	Body       []byte
+}
+
+// NewHTTPError constructs an HTTPError from a status code and response body.
+func NewHTTPError(status int, body []byte) *HTTPError {
+	return newHTTPError(status, body)
 }
 
 func (e *HTTPError) Error() string {

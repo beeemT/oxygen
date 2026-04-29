@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/mattn/go-isatty"
+
+	"github.com/beeemt/oxygen/internal/api"
 )
 
 // Format represents an output format.
@@ -23,19 +25,21 @@ const (
 
 // Writer writes formatted output to stdout/stderr.
 type Writer struct {
-	format Format
-	quiet  bool
-	stdout io.Writer
-	stderr io.Writer
+	format  Format
+	quiet   bool
+	noColor bool
+	stdout  io.Writer
+	stderr  io.Writer
 }
 
 // NewWriter returns a Writer configured for the given format.
-func NewWriter(format Format, quiet bool) *Writer {
+func NewWriter(format Format, quiet bool, noColor bool) *Writer {
 	return &Writer{
-		format: format,
-		quiet:  quiet,
-		stdout: os.Stdout,
-		stderr: os.Stderr,
+		format:  format,
+		quiet:   quiet,
+		noColor: noColor,
+		stdout:  os.Stdout,
+		stderr:  os.Stderr,
 	}
 }
 
@@ -136,4 +140,40 @@ func Prompt(message string) (string, error) {
 	_, err := fmt.Fscanln(os.Stdin, &input)
 
 	return input, err
+}
+
+// WriteTable writes rows to stdout using the table format.
+// headers must have at least one column; vals must have the same number of columns.
+func (w *Writer) WriteTable(headers []string, rows [][]string) error {
+	tw := NewTable(w.stdout, headers...)
+	for _, row := range rows {
+		tw.Row(row...)
+	}
+	return tw.Flush()
+}
+
+// WriteLogs renders a list of raw JSON log records using the human log format.
+func (w *Writer) WriteLogs(records []json.RawMessage) error {
+	r := NewLogRenderer(w.stdout, w.format == FormatJSON || w.format == FormatCSV || w.noColor)
+	for _, raw := range records {
+		r.RenderJSON(raw)
+	}
+	return nil
+}
+
+// WriteCSV writes raw JSON records as CSV to stdout.
+func (w *Writer) WriteCSV(records []json.RawMessage) error {
+	return WriteJSONRecords(w.stdout, records)
+}
+
+// WriteMetrics renders PromQL instant query results.
+func (w *Writer) WriteMetrics(results []InstantResult, query string, ts int64) error {
+	r := NewMetricsRenderer(w.stdout, w.format == FormatJSON || w.format == FormatCSV || w.noColor)
+	return r.RenderInstant(results, query, ts)
+}
+
+// WriteSearchMeta writes a search response wrapped in SearchMeta to stdout.
+func (w *Writer) WriteSearchMeta(resp *api.SearchResponse, startUs int64, endUs int64) error {
+	meta := api.BuildSearchMeta(resp, startUs, endUs)
+	return w.WriteJSON(meta)
 }
