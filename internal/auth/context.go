@@ -92,7 +92,7 @@ func (r *Resolver) Resolve(_ context.Context) (*Context, error) {
 	stored, err := r.store.Get(ContextKey(user, org, host))
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			return nil, fmt.Errorf("no stored credential for %s@%s; run 'o2 auth login' first: %w", user, host, ErrNoAuthContext)
+			return nil, fmt.Errorf("no stored credential for %s@%s; run 'o2 instance login <name>' to authenticate: %w", user, host, ErrNoAuthContext)
 		}
 
 		return nil, fmt.Errorf("reading keychain: %w", err)
@@ -137,10 +137,10 @@ func ListContexts(store Store) ([]ContextSummary, error) {
 
 // ContextSummary describes a stored credential without exposing the token.
 type ContextSummary struct {
-	Key  string
-	User string
-	Org  string
-	Host string
+	Key  string `json:"key,omitempty"`
+	User string `json:"user"`
+	Org  string `json:"org"`
+	Host string `json:"host"`
 }
 
 // ErrNoAuthContext is returned when no auth context can be resolved.

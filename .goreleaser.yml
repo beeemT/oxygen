@@ -1,0 +1,71 @@
+version: 2
+
+project_name: oxygen
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  - id: oxygen
+    main: ./cmd/o2
+    binary: o2
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - arm64
+      - amd64
+    ldflags:
+      - -s -w
+      - -X github.com/beeemt/oxygen/internal/version.version={{.Version}}
+      - -X github.com/beeemt/oxygen/internal/version.commit={{.Commit}}
+      - -X github.com/beeemt/oxygen/internal/version.date={{.Date}}
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - SKILL.md
+
+mans:
+  - name: o2.1
+    id: o2-man
+    file_names:
+      - o2.1
+    filters:
+      exclude:
+        - '^windows_'
+
+checksum:
+  name_template: checksums.txt
+
+release:
+  github:
+    owner: beeemT
+    name: oxygen
+  draft: true
+
+# Homebrew tap: generates a Formula/oxygen.rb file and pushes to the tap repo.
+homebrew:
+  - repository:
+      owner: beeemT
+      name: homebrew-tap
+      branch: main
+      pull_request:
+        enabled: false
+    directory: Formula
+    name: oxygen
+    homepage: https://github.com/beeemT/oxygen
+    description: CLI for OpenObserve — query logs, metrics, traces and manage the platform
+    license: MIT
+    fish_completions:
+      - completions/o2.fish
+    zsh_completions:
+      - completions/_o2

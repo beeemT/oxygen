@@ -33,3 +33,5 @@ go.work.sum
 
 bin/
 /o2
+# Added by goreleaser init:
+dist/

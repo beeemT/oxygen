@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 )
 
@@ -62,8 +63,37 @@ func (c *Client) View(ctx context.Context, viewID string) (*SavedViewResponse, e
 
 	var resp SavedViewResponse
 	if err := apiResp.Parse(&resp); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parsing saved view response: %w", err)
 	}
 
 	return &resp, nil
+}
+
+// CreateSavedView creates a new saved view.
+func (c *Client) CreateSavedView(ctx context.Context, req CreateSavedViewRequest) (*SavedViewResponse, error) {
+	apiResp, err := c.Do(ctx, Request{
+		Method: http.MethodPost,
+		Path:   "savedviews",
+		Body:   req,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var resp SavedViewResponse
+	if err := apiResp.Parse(&resp); err != nil {
+		return nil, fmt.Errorf("parsing create saved view response: %w", err)
+	}
+
+	return &resp, nil
+}
+
+// DeleteSavedView deletes a saved view by ID.
+func (c *Client) DeleteSavedView(ctx context.Context, viewID string) error {
+	_, err := c.Do(ctx, Request{
+		Method: http.MethodDelete,
+		Path:   "savedviews/" + viewID,
+	})
+
+	return err
 }

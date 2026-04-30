@@ -138,7 +138,7 @@ oxygen/
 ├── cmd/
 │   └── o2/
 │       ├── root.go          # root command + global flags
-│       ├── auth.go          # login / logout / list / current
+│       ├── instance.go      # instance add / remove / list / use / current / login
 │       ├── logs.go          # search, stream, values, history, views
 │       ├── metrics.go       # query (PromQL), search (SQL), streams
 │       ├── traces.go        # latest, dag, search
@@ -160,6 +160,8 @@ oxygen/
 │   ├── auth/
 │   │   ├── store.go         # keychain abstraction
 │   │   └── context.go       # active auth context + resolution
+│   ├── instances/
+│   │   └── instances.go     # named instance manager (instances.yaml)
 │   ├── config/
 │   │   └── config.go        # config file + env var mapping
 │   ├── output/
@@ -195,8 +197,9 @@ Pattern: **noun-first, verb-object, consistent flags**. Designed for AI agent sh
 o2 [global flags] <noun> [subcommand] [flags] [--] [positional args]
 
 Global flags:
-  --url URL           OpenObserve instance base URL
-  --org ORG           Organization ID
+  --instance NAME     Instance name (overrides current default)
+  --url URL           OpenObserve instance base URL (fallback when no instance set)
+  --org ORG           Organization ID (fallback when no instance set)
   --token TOKEN       Basic auth credential `Basic <base64>` (overrides keychain/env) [WARNING: visible in process list]
   --format FORMAT     Output format: json | pretty | table | log | csv  (default: json)
   --no-color          Disable color output
@@ -208,38 +211,60 @@ Global flags:
 > **Security note**: `--token` exposes credentials to command-line history and process listings.
 > Prefer `O2_TOKEN` env var or keychain storage for production use.
 
-### 3.1 Auth Commands
+### 3.1 Instance Commands
+
+Instances store a URL + org + user combination under a unique name. Once added, they can be selected with `--instance` on any command, or set as the default with `o2 instance use`.
 
 ```bash
-# Interactive login — prompts for password, stores token in keychain
-o2 auth login --url https://o2.example.com --org myorg --user admin@example.com
+# Add an instance (authenticate immediately if --password is given)
+o2 instance add prod --url https://o2.example.com --org myorg --user admin@example.com --password mypass
 
-# Login with env var (for scripting / CI)
-O2_PASSWORD=... o2 auth login --url https://o2.example.com --org myorg --user admin@example.com
-# O2_PASSWORD is accepted but never stored; it is used only for the login request.
+# Add an instance without authenticating (run 'o2 instance login' later)
+o2 instance add staging --url https://staging.o2.example.com --org staging --user admin@example.com
 
-# Logout — removes token from keychain
-o2 auth logout [--url https://o2.example.com --org myorg]
+# Authenticate (or re-authenticate) an existing instance
+O2_PASSWORD=... o2 instance login prod
 
-# List all stored contexts
-o2 auth list
+# List all instances (* marks the current default)
+o2 instance list
 
-# Show active context (effective URL, org, user after resolution)
-o2 auth current
+# Set the default instance
+o2 instance use prod
+
+# Show the current default instance
+o2 instance current
+
+# Remove an instance and its stored credential
+no2 instance remove prod
+```
+
+**Instance data** is stored in `~/.config/oxygen/instances.yaml`:
+```yaml
+instances:
+  - name: prod
+    url: https://o2.example.com
+    org: myorg
+    user: admin@example.com
+  - name: staging
+    url: https://staging.o2.example.com
+    org: staging
+    user: admin@example.com
+current: prod
 ```
 
 **Auth resolution priority (highest first):**
 
-1. `--url` + `--org` + `--token` flags
-2. `O2_URL` + `O2_ORG` + `O2_TOKEN` env vars
-3. `O2_URL` + `O2_ORG` env vars → reads token from keychain
-4. Default context set via `o2 auth login --default`
+1. `--instance <name>` flag → look up instance → use its URL/org/user → keychain lookup
+2. Current default instance → same as above
+3. `--url` + `--org` + `--token` flags
+4. `O2_URL` + `O2_ORG` + `O2_TOKEN` env vars
+5. `O2_URL` + `O2_ORG` env vars → reads token from keychain
 
-**Keychain key format**: `oxygen/{user}/{org}@{host}` (includes username to prevent collision between users on the same host).
+**Keychain key format**: `oxygen/{user}/{org}@{host}` (unchanged). Credentials are keyed by the instance's user/org/host tuple.
 
 > **Keychain security**: On Linux systems without `dbus` or a desktop session (headless servers, CI), the `keyring` library falls back to an encrypted-on-disk JSON store. The CLI detects this and prints a warning: `WARNING: System keychain unavailable; credentials stored in ~/.config/oxygen/credentials.json.`
 
-> **Basic auth note**: The stored token is a Basic auth credential (`Basic email:password`). This is the credential OpenObserve uses — it is not a JWT. The token remains valid until the user's password is changed. Storing the password in the keychain (instead of a derived token) means the stored credential is effectively a persistent login. This is the same security posture as a browser session cookie in OpenObserve.
+> **Basic auth note**: The stored token is a Basic auth credential (`Basic email:password`). This is the credential OpenObserve uses — it is not a JWT. The token remains valid until the user's password is changed.
 
 ### 3.2 Log Commands
 
@@ -389,7 +414,7 @@ On failure: `{"status": false, "message": "Invalid credentials"}`.
 
 **Stored token format**: `Basic base64("user@example.com:password")`. The CLI must send this as `Authorization: Basic <token>` on every request.
 
-**On token expiry/failure**: print `Authentication failed (401). Run 'o2 auth login' to refresh.` with exit code 2. Do NOT attempt automatic refresh with a stored password — that creates a persistent credential that survives password rotation.
+**On token expiry/failure**: print `Authentication failed (401). Run 'o2 instance login <name>' to refresh.` with exit code 2. Do NOT attempt automatic refresh with a stored password — that creates a persistent credential that survives password rotation.
 
 ### 4.2 Keychain Abstraction
 
@@ -508,7 +533,7 @@ Errors print to stderr with exit codes differentiated by class so AI agents can 
 |---|---|---|
 | 0 | Success | none |
 | 1 | Usage/syntax error | fix command arguments |
-| 2 | Auth failure (401) | run `o2 auth login` |
+| 2 | Auth failure (401) | run `o2 instance login <name>` |
 | 3 | Forbidden (403) | check org/permissions |
 | 4 | Not found (404) | check stream/resource name |
 | 5 | Invalid request (400/422) | fix query syntax, see error message |
@@ -649,8 +674,7 @@ The CLI translates this to a single `/_search_multi` request internally.
 - `internal/auth/context.go` — resolution + env var priority
 - `internal/api/client.go` — http.Client + auth middleware + backoff retry
 - `cmd/o2/root.go` — global flags + config wiring
-- `o2 auth login/logout/list/current`
-- `internal/output/json.go` — JSON output (required for `o2 auth current` to work)
+- `o2 instance add/remove/list/use/current/login` (Phase 6)
 
 ### Phase 2: Core Querying
 
@@ -686,6 +710,8 @@ The CLI translates this to a single `/_search_multi` request internally.
 ### Phase 5: Polish
 
 - Shell completion (bash/zsh/fish)
+  - Fish and Zsh completions are **automatically installed** via Homebrew when installing via `brew install beeemT/tap/oxygen`.
+  - Bash completions are included in the tarball but require manual installation (`source` in `.bashrc`).
 - `o2 dashboards create/update/delete`
 - `o2 alerts create/update/delete`
 - `o2 logs views create/delete`
@@ -693,20 +719,147 @@ The CLI translates this to a single `/_search_multi` request internally.
 - README + man page generation
 - SKILL.md file
 - Binary release workflow (macOS arm64/amd64 + Linux amd64)
-- **Homebrew tap integration**: on every version tag, the release workflow generates `Formula/oxygen.rb` and pushes it to `beeemT/homebrew-tap` (the same pattern used by `beeemT/git-work`). Users install with `brew install beeemT/tap/oxygen`; the installed binary is named `o2`.
+- **Homebrew tap integration**: on every version tag, the release workflow generates `Formula/oxygen.rb` and pushes it to `beeemT/homebrew-tap` (the same pattern used by `beeemT/git-work`). Users install with `brew install beeemT/tap/oxygen`; the installed binary is named `o2`. Fish and Zsh shell completions are installed automatically; Bash requires manual setup.
+
+### Phase 6: Multi-Instance Support
+
+**Goal**: Support managing and switching between multiple named OpenObserve instances.
+
+#### 6.1 `internal/instances/instances.go`
+
+```go
+type Instance struct {
+    Name string
+    URL  string
+    Org  string
+    User string
+}
+
+type Manager struct {
+    instances   map[string]Instance
+    currentName string
+    configPath  string
+}
+
+func NewManager(configPath string) (*Manager, error)
+func (m *Manager) Add(name, url, org, user string) error
+func (m *Manager) Remove(name string) error
+func (m *Manager) Get(name string) (Instance, error)
+func (m *Manager) SetCurrent(name string) error
+func (m *Manager) Current() (Instance, bool, error)
+func (m *Manager) List() []Instance
+```
+
+- Load/save from YAML in the config directory (`~/.config/oxygen/instances.yaml`)
+- Validate unique names on add
+- `SetCurrent` errors if instance does not exist
+- `Current` returns `(instance, hasCurrent, error)` where `hasCurrent=false` means no default set
+- `Remove` also deletes the stored keychain credential for that instance
+
+#### 6.2 `cmd/o2/instance.go` — instance commands
+
+```
+o2 instance add <name> --url <url> --org <org> --user <user> [--password <pw>]
+o2 instance remove <name>
+o2 instance list
+no2 instance use <name>     # set current default
+no2 instance current        # show current default
+no2 instance login <name>  # (re-)authenticate an existing instance
+```
+
+**`o2 instance add`**:
+- `--url`, `--org`, `--user` are required flags
+- If `--password` is given or `O2_PASSWORD` is set, performs login immediately and stores the credential
+- If no password is provided, the instance is created unauthenticated; the user must run `o2 instance login <name>` later
+
+**`o2 instance remove`**:
+- Removes the instance from `instances.yaml`
+- Also removes the stored keychain credential for that instance
+
+**`o2 instance login`**:
+- Re-authenticates an existing instance (password changed, session expired, etc.)
+- Prompts for password interactively if not given via `--password` or `O2_PASSWORD`
+- Errors if the instance does not exist
+
+**`o2 instance list`**:
+- Lists all instances, marking the current one with `*`
+
+**`o2 instance use`**:
+- Sets the current default instance (stored in `instances.yaml`)
+- Errors if the instance does not exist
+
+**`o2 instance current`**:
+- Prints the current default instance name, or nothing if none is set
+
+#### 6.3 `cmd/o2/root.go` — global `--instance` flag
+
+Add global `--instance` flag:
+```go
+fs.String("instance", "", "Instance name (overrides current default)")
+```
+
+Instance resolution happens in `initConfig` via `PersistentPreRunE`. The manager is lazily initialized with `sync.Once` to avoid initialization order issues. When `--instance` is set, the named instance's URL/org/user override the merged config values. When no flag is set, the current default from `instanceMgr.Current()` is used if available.
+
+```go
+// Lazily initialise instance manager once.
+var initInstanceMgrOnce sync.Once
+initInstanceMgrOnce.Do(func() {
+    configDir := configFileDir()
+    path := filepath.Join(configDir, "instances.yaml")
+    instanceMgr, err = instances.NewManager(path)
+    if err != nil {
+        fmt.Fprintf(os.Stderr, "WARNING: failed to load instances: %v\n", err)
+    }
+})
+
+// Resolve instance from --instance flag or current default.
+instanceName, _ := cmd.Flags().GetString("instance")
+var inst instances.Instance
+hasInstance := false
+if instanceName != "" {
+    inst, err = instanceMgr.Get(instanceName)
+    if err != nil {
+        return fmt.Errorf("instance %q not found. ...", instanceName, instanceName)
+    }
+    hasInstance = true
+} else {
+    inst, hasInstance, err = instanceMgr.Current()
+    if err != nil {
+        return fmt.Errorf("loading current instance: %w", err)
+    }
+}
+if hasInstance {
+    if inst.URL != ""  { cfg.URL = inst.URL }
+    if inst.Org != ""  { cfg.Org = inst.Org }
+    if inst.User != "" { cfg.User = inst.User }
+}
+```
+
+The `instanceMgr` package variable is exposed so command files can call `instanceMgr.Current()` (e.g., in `o2 config show`).
+
+#### 6.4 `internal/auth/context.go`
+
+`Resolver.Resolve` is unchanged — it accepts only a `context.Context`. Instance selection happens in `initConfig` before any command runs: the resolved instance values are written directly into `cfg.URL/Org/User`, so `Resolve` sees the correct values without needing an instance name parameter.
+
+#### 6.5 `cmd/o2/root.go` — remove `auth` commands
+
+`cmd/o2/auth.go` does not exist. Authentication is handled exclusively through `o2 instance add` (with `--password`) and `o2 instance login`.
+
+#### 6.6 Command propagation
+
+Child commands (`logs`, `metrics`, `traces`, `streams`, `dashboards`, `alerts`) call `resolveClient()` which reads from the already-merged `cfg` global. Since `initConfig` runs via `PersistentPreRunE` before every command, the cfg values already reflect the instance override — no explicit `--instance` flag propagation is needed. Cobra's flag inheritance means `viper.GetString("instance")` is available in any subcommand if needed.
 
 ---
 
 ## 8. Acceptance Criteria
 
-1. `O2_PASSWORD=... o2 auth login --url $O2_URL --org $O2_ORG --user $O2_USER` stores token in keychain under `oxygen/{user}/{org}@{host}`; `o2 auth list` shows the new context.
-2. Fresh process: `O2_URL=$O2_URL O2_ORG=$O2_ORG O2_TOKEN=$O2_TOKEN o2 logs search --stream mylogs --sql "SELECT *"` returns JSON results (no keychain involved).
+1. `O2_PASSWORD=... o2 instance add prod --url $O2_URL --org $O2_ORG --user $O2_USER` stores token in keychain under `oxygen/{user}/{org}@{host}`; `o2 instance list` shows the new instance.
 3. `o2 logs search --stream mylogs --sql "SELECT *" --format log --start=5m` renders human-readable log lines with colored severity and aligned fields.
 4. `o2 metrics query --expr 'up' --start=now` returns PromQL results in the default JSON format.
 5. `o2 logs stream --stream mylogs --sql "SELECT *" --follow` streams NDJSON results; `Ctrl+C` exits cleanly without goroutine leak.
 6. `o2 streams list` shows a formatted table with stream name, type, doc count, and storage size.
 7. `o2 alerts list` uses the correct `/v2/{org_id}/alerts` endpoint (verified by `curl -v` against a test instance).
-8. On a Linux machine without dbus, `o2 auth login` prints `WARNING: System keychain unavailable; credentials stored in ~/.config/oxygen/credentials.json.`
+8. On a Linux machine without dbus, `o2 instance add` prints `WARNING: System keychain unavailable; credentials stored in ~/.config/oxygen/credentials.json.`
 9. Build produces a single static binary for macOS (arm64) with no external runtime dependency.
 10. `make lint test` passes on each commit.
 11. `o2 logs search --stream mylogs --sql "SELECT *" --dry-run` outputs the resolved request body with microsecond timestamps, no HTTP call is made.

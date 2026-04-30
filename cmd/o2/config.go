@@ -25,24 +25,32 @@ func init() {
 }
 
 type configShow struct {
-	URL     string `json:"url"`
-	Org     string `json:"org"`
-	Format  string `json:"format"`
-	Timeout string `json:"timeout"`
-	NoColor bool   `json:"no_color"`
-	Quiet   bool   `json:"quiet"`
-	DryRun  bool   `json:"dry_run"`
+	Instance string `json:"instance,omitempty"`
+	URL      string `json:"url"`
+	Org      string `json:"org"`
+	Format   string `json:"format"`
+	Timeout  string `json:"timeout"`
+	NoColor  bool   `json:"no_color"`
+	Quiet    bool   `json:"quiet"`
+	DryRun   bool   `json:"dry_run"`
 }
 
 func runConfigShow(_ *cobra.Command, _ []string) error {
+	// Resolve the current instance name.
+	var instanceName string
+	if inst, ok, _ := instanceMgr.Current(); ok {
+		instanceName = inst.Name
+	}
+
 	show := configShow{
-		URL:     cfg.URL,
-		Org:     cfg.Org,
-		Format:  string(cfg.Format),
-		Timeout: cfg.Timeout.String(),
-		NoColor: cfg.NoColor,
-		Quiet:   cfg.Quiet,
-		DryRun:  cfg.DryRun,
+		Instance: instanceName,
+		URL:      cfg.URL,
+		Org:      cfg.Org,
+		Format:   string(cfg.Format),
+		Timeout:  cfg.Timeout.String(),
+		NoColor:  cfg.NoColor,
+		Quiet:    cfg.Quiet,
+		DryRun:   cfg.DryRun,
 	}
 
 	// Determine the effective token source.
@@ -65,6 +73,9 @@ func runConfigShow(_ *cobra.Command, _ []string) error {
 	// Build extended info for pretty mode.
 	if cfg.Format == "pretty" || cfg.Format == "table" {
 		fmt.Fprintln(os.Stdout, "Effective configuration:")
+		if instanceName != "" {
+			fmt.Fprintf(os.Stdout, "  Instance: %s\n", instanceName)
+		}
 		fmt.Fprintf(os.Stdout, "  URL:      %s\n", show.URL)
 		fmt.Fprintf(os.Stdout, "  Org:      %s\n", show.Org)
 		fmt.Fprintf(os.Stdout, "  Format:   %s\n", show.Format)

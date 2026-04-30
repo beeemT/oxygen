@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"strconv"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -70,6 +72,8 @@ func init() {
 	qf.String("start", "", "Start time: Go duration, unix timestamp, RFC3339, or 'now' (default: now)")
 	qf.String("end", "", "End time: Go duration, unix timestamp, RFC3339, or 'now' (default: now)")
 	qf.String("step", "", "Query resolution step (e.g. 15s, 1m, 5m)")
+	qf.Bool("watch", false, "Continuously poll for new results")
+	qf.Duration("interval", 15*time.Second, "Polling interval for --watch")
 
 	// series flags.
 	sf := metricsSeriesCmd.Flags()
@@ -108,11 +112,21 @@ func runMetricsQuery(cmd *cobra.Command, _ []string) error {
 	startStr := cmdFlagStr(cmd, "start")
 	endStr := cmdFlagStr(cmd, "end")
 	step := cmdFlagStr(cmd, "step")
+	watch, _ := cmd.Flags().GetBool("watch")
+	interval, _ := cmd.Flags().GetDuration("interval")
 
 	// Resolve start/end times to unix timestamps.
 	startTS, endTS, err := resolveMetricsTime(startStr, endStr)
 	if err != nil {
 		return err
+	}
+
+	// Watch mode: only supported for instant queries without --step.
+	if watch {
+		if step != "" {
+			return fmt.Errorf("--watch is not supported with --step (range queries); use --watch without --step for continuous instant queries")
+		}
+		return runMetricsQueryWatch(cli, cmd, expr, interval)
 	}
 
 	// Range query: requires --step.
@@ -121,10 +135,40 @@ func runMetricsQuery(cmd *cobra.Command, _ []string) error {
 	}
 
 	// Instant query: use end time as the query time.
-	return runMetricsQueryInstant(cli, expr, endTS)
+	return runMetricsQueryInstant(cli, cmd, expr, endTS)
 }
 
-func runMetricsQueryInstant(cli *api.Client, expr string, endTS int64) error {
+// runMetricsQueryWatch polls the instant query endpoint at regular intervals.
+func runMetricsQueryWatch(cli *api.Client, cmd *cobra.Command, expr string, interval time.Duration) error {
+	ctx := cmd.Context()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	first := true
+	for {
+		select {
+		case <-ticker.C:
+			// no-op: select exists only to receive ctx.Done or tick
+		case <-ctx.Done():
+			// User interrupted (Ctrl+C); exit cleanly without printing an error.
+			return nil
+		}
+
+		now := time.Now().Unix()
+		if !first {
+			if !cfg.Quiet {
+				fmt.Fprintf(os.Stderr, "\n--- %s ---\n", time.Now().Format(time.TimeOnly))
+			}
+		}
+		first = false
+
+		if err := runMetricsQueryInstant(cli, cmd, expr, now); err != nil {
+			return err
+		}
+	}
+}
+
+func runMetricsQueryInstant(cli *api.Client, cmd *cobra.Command, expr string, endTS int64) error {
 	// Use end time as the query time for instant queries.
 	timeStr := strconv.FormatInt(endTS, 10)
 

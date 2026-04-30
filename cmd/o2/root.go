@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -14,14 +16,17 @@ import (
 
 	"github.com/beeemt/oxygen/internal/auth"
 	"github.com/beeemt/oxygen/internal/config"
+	"github.com/beeemt/oxygen/internal/instances"
 	"github.com/beeemt/oxygen/internal/output"
+	"github.com/beeemt/oxygen/internal/version"
 )
 
 // Global config and writer — initialised in initConfig.
 var (
-	cfg       *config.Config
-	store     auth.Store
-	outWriter *output.Writer
+	cfg         *config.Config
+	store       auth.Store
+	outWriter   *output.Writer
+	instanceMgr *instances.Manager
 )
 
 // rootCmd is the top-level command.
@@ -33,7 +38,7 @@ and for managing the platform. It targets both AI agents (structured JSON output
 and humans (pretty terminal rendering).
 
 Auth:
-  o2 auth login --url https://o2.example.com --org myorg --user admin@example.com
+  o2 instance add prod --url https://o2.example.com --org myorg --user admin@example.com
 
 Search logs:
   o2 logs search --stream mylogs --sql "SELECT * WHERE status = 'error'" --start=1h
@@ -47,6 +52,8 @@ Query metrics:
 }
 
 func init() {
+	rootCmd.Version = version.Version
+
 	fs := rootCmd.PersistentFlags()
 	fs.String("url", "", "OpenObserve base URL")
 	fs.String("org", "", "Organization ID")
@@ -56,8 +63,18 @@ func init() {
 	fs.Bool("no-color", false, "Disable color output")
 	fs.BoolP("quiet", "q", false, "Suppress informational output")
 	fs.Bool("dry-run", false, "Print resolved request without executing")
+	fs.String("instance", "", "Instance name (overrides current default)")
 
-	rootCmd.AddCommand(authCmd)
+	// Shell completion for bash, zsh, and fish.
+	rootCmd.GenBashCompletionFile("completions/o2.bash")
+	if zshFile, err := os.Create("completions/_o2"); err == nil {
+		rootCmd.GenZshCompletion(zshFile)
+		zshFile.Close()
+	}
+	if fishFile, err := os.Create("completions/o2.fish"); err == nil {
+		rootCmd.GenFishCompletion(fishFile, true)
+		fishFile.Close()
+	}
 }
 
 // initConfig populates cfg from config file + env vars + CLI flags,
@@ -118,6 +135,49 @@ func initConfig(cmd *cobra.Command) error {
 	// User may come from flag or env var.
 	if cfg.User == "" {
 		cfg.User = os.Getenv("O2_USER")
+	}
+
+	// Lazily initialise instance manager once.
+	var initInstanceMgrOnce sync.Once
+	initInstanceMgrOnce.Do(func() {
+		configDir := configFileDir()
+		path := filepath.Join(configDir, "instances.yaml")
+		instanceMgr, err = instances.NewManager(path)
+		if err != nil {
+			// Defensive: log and continue without instance support.
+			fmt.Fprintf(os.Stderr, "WARNING: failed to load instances: %v\n", err)
+		}
+	})
+
+	// Resolve instance from --instance flag or current default.
+	instanceName, _ := cmd.Flags().GetString("instance")
+	var inst instances.Instance
+	hasInstance := false
+	if instanceMgr != nil {
+		if instanceName != "" {
+			inst, err = instanceMgr.Get(instanceName)
+			if err != nil {
+				return fmt.Errorf("instance %q not found. Run 'o2 instance add %s ...' to add it", instanceName, instanceName)
+			}
+			hasInstance = true
+		} else {
+			inst, hasInstance, err = instanceMgr.Current()
+			if err != nil {
+				return fmt.Errorf("loading current instance: %w", err)
+			}
+		}
+	}
+	if hasInstance {
+		// Override config with instance values.
+		if inst.URL != "" {
+			cfg.URL = inst.URL
+		}
+		if inst.Org != "" {
+			cfg.Org = inst.Org
+		}
+		if inst.User != "" {
+			cfg.User = inst.User
+		}
 	}
 
 	// Open credential store, falling back to encrypted file on headless Linux.
@@ -181,6 +241,15 @@ func resolveContext() (*auth.Context, error) {
 	resolver := auth.NewResolver(cfg, store)
 
 	return resolver.Resolve(context.Background())
+}
+
+// configFileDir returns the directory used for config files (~/.config/oxygen).
+func configFileDir() string {
+	home, _ := os.UserHomeDir()
+	if home == "" {
+		return ".config/oxygen"
+	}
+	return filepath.Join(home, ".config", "oxygen")
 }
 
 func extractHost(rawURL string) string {

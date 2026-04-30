@@ -67,10 +67,29 @@ var logsViewsGetCmd = &cobra.Command{
 	RunE:  runLogsViewsGet,
 }
 
+var logsViewsCreateCmd = &cobra.Command{
+	Use:   "create",
+	Short: "Create a new saved view",
+	RunE:  runLogsViewsCreate,
+}
+
+var logsViewsDeleteCmd = &cobra.Command{
+	Use:   "delete [view-id]",
+	Short: "Delete a saved view",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runLogsViewsDelete,
+}
+
 func init() {
 	rootCmd.AddCommand(logsCmd)
 	logsCmd.AddCommand(logsSearchCmd, logsStreamCmd, logsValuesCmd, logsHistoryCmd, logsViewsCmd)
-	logsViewsCmd.AddCommand(logsViewsListCmd, logsViewsGetCmd)
+	logsViewsCmd.AddCommand(logsViewsListCmd, logsViewsGetCmd, logsViewsCreateCmd, logsViewsDeleteCmd)
+
+	// create flags.
+	cf := logsViewsCreateCmd.Flags()
+	cf.String("name", "", "View name (required)")
+	cf.String("stream", "", "Stream name")
+	cf.String("sql", "", "SQL query")
 
 	fs := logsSearchCmd.Flags()
 	fs.String("stream", "", "Stream name")
@@ -82,6 +101,8 @@ func init() {
 	fs.String("end", "", "End time as Go duration or 'now' (default: now)")
 	fs.Bool("track-total", true, "Count total matching records")
 	fs.Bool("quick-mode", false, "Enable quick mode for faster results")
+	fs.Bool("watch", false, "Continuously poll for new results")
+	fs.Duration("interval", 5*time.Second, "Polling interval for --watch")
 
 	// Stream flags.
 	sfs := logsStreamCmd.Flags()
@@ -204,12 +225,19 @@ func runLogsSearch(cmd *cobra.Command, _ []string) error {
 	size, _ := cmd.Flags().GetInt64("size")
 	trackTotal, _ := cmd.Flags().GetBool("track-total")
 	quickMode, _ := cmd.Flags().GetBool("quick-mode")
+	watch, _ := cmd.Flags().GetBool("watch")
+	interval, _ := cmd.Flags().GetDuration("interval")
 
 	// Build the request.
 	reqBody := buildSearchRequest(sql, stream, startUs, endUs, from, size, trackTotal, quickMode)
 
 	if cfg.DryRun {
 		return printDryRun(cli, "POST", "_search", reqBody, startUs, endUs)
+	}
+
+	// Watch mode: poll periodically for new results.
+	if watch {
+		return runLogsSearchWatch(cli, cmd, reqBody, startUs, interval)
 	}
 
 	resp, err := cli.Search(cmd.Context(), reqBody)
@@ -228,6 +256,114 @@ func runLogsSearch(cmd *cobra.Command, _ []string) error {
 	default:
 		return outWriter.WriteSearchMeta(resp, startUs, endUs)
 	}
+}
+
+// runLogsSearchWatch polls the search endpoint at regular intervals, printing
+// only new results since the last poll. It advances the time window using
+// the max timestamp seen in each response.
+func runLogsSearchWatch(cli *api.Client, cmd *cobra.Command, firstReq api.SearchRequest, startUs int64, interval time.Duration) error {
+	ctx := cmd.Context()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	// lastEnd is the upper bound of the previous query window.
+	// Initialise to firstReq's end so the first poll is a small window.
+	lastEnd := firstReq.Query.EndTime
+	seen := 0
+	first := true
+
+	for {
+		select {
+		case <-ticker.C:
+			// no-op: select exists only to receive ctx.Done or tick
+		case <-ctx.Done():
+			// User interrupted (Ctrl+C); exit cleanly without printing an error.
+			return nil
+		}
+
+		now := time.Now().UnixMicro()
+		req := api.SearchRequest{
+			Query: api.SearchQuery{
+				SQL:            firstReq.Query.SQL,
+				StartTime:      lastEnd,
+				EndTime:        now,
+				From:           0,
+				Size:           firstReq.Query.Size,
+				TrackTotalHits: false, // don't need total count in watch mode
+				QuickMode:      firstReq.Query.QuickMode,
+				QueryType:      firstReq.Query.QueryType,
+			},
+			UseCache: false, // disable cache for watch queries
+		}
+
+		resp, err := cli.Search(ctx, req)
+		if err != nil {
+			return err
+		}
+
+		if len(resp.Hits) == 0 {
+			// No new results; advance lastEnd to now so next window is current.
+			lastEnd = now
+			continue
+		}
+
+		// Print separator between polling rounds (except first).
+		if !first {
+			if !cfg.Quiet {
+				fmt.Fprintf(os.Stderr, "\n--- %s ---\n", time.Now().Format(time.TimeOnly))
+			}
+		}
+		first = false
+
+		seen += len(resp.Hits)
+
+		// Print results.
+		switch cfg.Format {
+		case "table":
+			if err := renderHitsTable(resp); err != nil {
+				return err
+			}
+		case "log":
+			if err := outWriter.WriteLogs(resp.Hits); err != nil {
+				return err
+			}
+		default:
+			if err := outWriter.WriteSearchMeta(resp, req.Query.StartTime, req.Query.EndTime); err != nil {
+				return err
+			}
+		}
+
+		// Advance lastEnd past the last seen timestamp to avoid duplicates.
+		lastEnd = maxTimestamp(resp.Hits, lastEnd)
+	}
+}
+
+// maxTimestamp returns the maximum _timestamp field value in hits, or fallback.
+func maxTimestamp(hits []json.RawMessage, fallback int64) int64 {
+	max := fallback
+	for _, raw := range hits {
+		var obj map[string]any
+		if err := json.Unmarshal(raw, &obj); err != nil {
+			continue
+		}
+		if ts, ok := obj["_timestamp"]; ok {
+			switch v := ts.(type) {
+			case float64:
+				if int64(v) > max {
+					max = int64(v)
+				}
+			case int64:
+				if v > max {
+					max = v
+				}
+			case uint64:
+				if int64(v) > max {
+					max = int64(v)
+				}
+			}
+		}
+	}
+	return max + 1 // +1 to exclude the boundary record itself
 }
 
 // renderHitsTable renders search hits as a table using the response columns.
@@ -598,6 +734,52 @@ func runLogsViewsList(_ *cobra.Command, _ []string) error {
 	}
 
 	return outWriter.WriteJSON(resp.Views)
+}
+
+func runLogsViewsCreate(cmd *cobra.Command, _ []string) error {
+	cli, err := resolveClient()
+	if err != nil {
+		return err
+	}
+
+	name := cmdFlagStr(cmd, "name")
+	if name == "" {
+		return fmt.Errorf("--name is required")
+	}
+	stream := cmdFlagStr(cmd, "stream")
+	sql := cmdFlagStr(cmd, "sql")
+
+	resp, err := cli.CreateSavedView(context.Background(), api.CreateSavedViewRequest{
+		Name:   name,
+		Stream: stream,
+		SQL:    sql,
+	})
+	if err != nil {
+		return err
+	}
+
+	if !cfg.Quiet {
+		outWriter.Info("Created view %s", resp.View.ID)
+	}
+
+	return outWriter.WriteJSON(resp.View)
+}
+
+func runLogsViewsDelete(cmd *cobra.Command, args []string) error {
+	cli, err := resolveClient()
+	if err != nil {
+		return err
+	}
+
+	if err := cli.DeleteSavedView(context.Background(), args[0]); err != nil {
+		return err
+	}
+
+	if !cfg.Quiet {
+		outWriter.Info("Deleted view %s", args[0])
+	}
+
+	return nil
 }
 
 func runLogsViewsGet(cmd *cobra.Command, args []string) error {

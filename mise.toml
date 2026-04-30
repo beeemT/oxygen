@@ -1,10 +1,15 @@
 [tools]
 go = "1.25"
 golangci-lint = "2.11"
+goreleaser = "2.5"
 
 [tasks]
-build = "cd cmd/o2 && go build -ldflags=\"-s -w\" -o ../../o2 ."
-install = "cd cmd/o2 && go install -ldflags=\"-s -w\""
+version-ldflags = "-s -w"
+version-version = "-X github.com/beeemt/oxygen/internal/version.version=dev"
+version-commit = "-X github.com/beeemt/oxygen/internal/version.commit=$(git rev-parse --short HEAD)"
+version-date = "-X github.com/beeemt/oxygen/internal/version.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+build = "cd cmd/o2 && go build -ldflags=\"${version-ldflags} ${version-version} ${version-commit} ${version-date}\" -o ../../o2 ."
+install = "cd cmd/o2 && go install -ldflags=\"${version-ldflags} ${version-version} ${version-commit} ${version-date}\""
 lint = "golangci-lint run ./..."
 test = "go test -race ./..."
 test-short = "go test ./..."
