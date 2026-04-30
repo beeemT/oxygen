@@ -34,15 +34,6 @@ archives:
       - README.md
       - SKILL.md
 
-mans:
-  - name: o2.1
-    id: o2-man
-    file_names:
-      - o2.1
-    filters:
-      exclude:
-        - '^windows_'
-
 checksum:
   name_template: checksums.txt
 
@@ -53,19 +44,15 @@ release:
   draft: true
 
 # Homebrew tap: generates a Formula/oxygen.rb file and pushes to the tap repo.
-homebrew:
+homebrew_casks:
   - repository:
       owner: beeemT
       name: homebrew-tap
       branch: main
-      pull_request:
-        enabled: false
     directory: Formula
     name: oxygen
     homepage: https://github.com/beeemT/oxygen
     description: CLI for OpenObserve — query logs, metrics, traces and manage the platform
-    license: MIT
-    fish_completions:
-      - completions/o2.fish
-    zsh_completions:
-      - completions/_o2
+    completions:
+      fish: completions/o2.fish
+      zsh: completions/_o2
