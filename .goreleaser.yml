@@ -49,6 +49,7 @@ homebrew_casks:
       owner: beeemT
       name: homebrew-tap
       branch: main
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Formula
     name: oxygen
     homepage: https://github.com/beeemT/oxygen
