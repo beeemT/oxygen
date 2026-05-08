@@ -28,3 +28,6 @@ darwin-arm64 = "cd cmd/o2 && GOOS=darwin GOARCH=arm64 go build -ldflags=\"-s -w\
 darwin-amd64 = "cd cmd/o2 && GOOS=darwin GOARCH=amd64 go build -ldflags=\"-s -w\" -o ../../o2-darwin-amd64 ."
 linux-amd64 = "cd cmd/o2 && GOOS=linux GOARCH=amd64 go build -ldflags=\"-s -w\" -o ../../o2-linux-amd64 ."
 release.run = ["darwin-arm64", "darwin-amd64", "linux-amd64"]
+
+[hooks]
+enter='codegraph sync'
